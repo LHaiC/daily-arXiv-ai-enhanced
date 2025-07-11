@@ -39,6 +39,10 @@ def process_single_item(chain, item: Dict, language: str) -> Dict:
             "content": item['summary']
         })
         item['AI'] = response.model_dump()
+        # 关键！在每次API调用后等待，以遵守速率限制
+        # 这个方法只有在 max_workers=1 时才有效
+        time.sleep(6.1) # 增加6.1秒的延时
+
     except langchain_core.exceptions.OutputParserException as e:
         # 尝试从错误信息中提取 JSON 字符串并修复
         error_msg = str(e)
