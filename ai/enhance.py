@@ -33,41 +33,53 @@ def parse_args():
     return parser.parse_args()
 
 def process_single_item(chain, item: Dict, language: str) -> Dict:
-    """处理单个数据项"""
-    try:
-        response: Structure = chain.invoke({
-            "language": language,
-            "content": item['summary']
-        })
-        item['AI'] = response.model_dump()
-        # 关键！在每次API调用后等待，以遵守速率限制
-        # 这个方法只有在 max_workers=1 时才有效
-        time.sleep(4) # 增加4秒的延时 for gemini flash lite
+    """
+    处理单个数据项，内置了重试和错误处理逻辑。
+    """
+    max_retries = 3  # 最多重试3次
+    
+    for attempt in range(max_retries):
+        try:
+            # 正常调用API
+            response: Structure = chain.invoke({
+                "language": language,
+                "content": item['summary']
+            })
+            
+            # 检查API是否返回了空值 (处理 'NoneType' 错误)
+            if response is None:
+                print(f"Item {item['id']} received a None response. Marking as error.", file=sys.stderr)
+                # 这是一个无法通过重试解决的问题，所以直接跳出循环
+                break
 
-    except langchain_core.exceptions.OutputParserException as e:
-        # 尝试从错误信息中提取 JSON 字符串并修复
-        error_msg = str(e)
-        if "Function Structure arguments:" in error_msg:
-            try:
-                # 提取 JSON 字符串
-                json_str = error_msg.split("Function Structure arguments:", 1)[1].strip().split('are not valid JSON')[0].strip()
-                # 预处理 LaTeX 数学符号 - 使用四个反斜杠来确保正确转义
-                json_str = json_str.replace('\\', '\\\\')
-                # 尝试解析修复后的 JSON
-                fixed_data = json.loads(json_str)
-                item['AI'] = fixed_data
-                return item
-            except Exception as json_e:
-                print(f"Failed to fix JSON for {item['id']}: {json_e} {json_str}", file=sys.stderr)
-        
-        # 如果修复失败，返回错误状态
-        item['AI'] = {
-            "tldr": "Error",
-            "motivation": "Error",
-            "method": "Error",
-            "result": "Error",
-            "conclusion": "Error"
-        }
+            # 如果成功，赋值并直接返回结果
+            item['AI'] = response.model_dump()
+            return item
+
+        except Exception as e:
+            # 检查这个异常是不是速率限制错误
+            if "Error code: 429" in str(e):
+                wait_time = (attempt + 1) * 5  # 第一次等5秒, 第二次等10秒, ...
+                print(f"Rate limit hit for item {item['id']}. Attempt {attempt + 1}/{max_retries}. Retrying in {wait_time}s...", file=sys.stderr)
+                time.sleep(wait_time)
+                # 等待后，继续下一次循环（重试）
+                continue
+            
+            # 如果是其他任何类型的错误 (包括 OutputParserException)
+            else:
+                print(f"An unrecoverable error occurred for item {item['id']}: {e}", file=sys.stderr)
+                # 这是一个无法通过重试解决的问题，所以直接跳出循环
+                break
+
+    # 如果循环结束（无论是重试用尽还是中途跳出），都说明处理失败
+    # 给item赋一个默认的错误值，防止后续程序出错
+    item['AI'] = {
+        "tldr": "Error",
+        "motivation": "Error",
+        "method": "Error",
+        "result": "Error",
+        "conclusion": "Error"
+    }
     return item
 
 def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int) -> List[Dict]:
