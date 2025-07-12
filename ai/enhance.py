@@ -71,6 +71,8 @@ def process_single_item(chain, item: Dict, language: str) -> Dict:
                 # 这是一个无法通过重试解决的问题，所以直接跳出循环
                 break
 
+    print(f"Failed to process item {item['id']} after all attempts. Giving up.", file=sys.stderr)
+    
     # 如果循环结束（无论是重试用尽还是中途跳出），都说明处理失败
     # 给item赋一个默认的错误值，防止后续程序出错
     item['AI'] = {
